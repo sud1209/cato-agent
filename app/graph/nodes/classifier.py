@@ -16,7 +16,7 @@ Also extract any named entities if present:
 - "address": property address if mentioned
 
 Respond ONLY with valid JSON:
-{"intent": "<one of the 5 values>", "name": "<string or null>", "address": "<string or null>"}
+{{"intent": "<one of the 5 values>", "name": "<string or null>", "address": "<string or null>"}}
 
 User message: "{message}"
 """
