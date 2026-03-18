@@ -1,0 +1,28 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[oc]
+*.pyo
+.venv/
+dist/
+build/
+*.egg-info/
+
+# uv (lockfile is committed; venv is not)
+# uv.lock is intentionally NOT ignored
+
+# Data & local files
+data/*.db
+data/*.csv
+data/*.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
