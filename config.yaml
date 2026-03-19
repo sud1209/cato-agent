@@ -1,5 +1,6 @@
 llm:
   model: "openai/gpt-4o"
+  fast_model: "openai/gpt-4o-mini"
   temperature: 0.7
   streaming: true
 
@@ -10,6 +11,7 @@ rag:
   retrieval_k: 10
   rerank_top_k: 3
   reranker: "local"
+  bm25_only: true
 
 memory:
   working_window: 20

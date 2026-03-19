@@ -30,7 +30,6 @@ async def index_documents(source_path: Path, embeddings) -> list[Document]:
         embeddings,
         redis_url=settings.redis.url,
         index_name="cato_hei_index",
-        schema=None,
     )
     await store.aadd_documents(chunks)
     return chunks

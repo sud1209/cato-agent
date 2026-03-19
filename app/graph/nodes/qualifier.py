@@ -5,13 +5,14 @@ from app.graph.state import CatoState
 from app.memory.profile import UserProfile
 
 QUALIFIER_SYSTEM = """\
-You are the Cato Qualifier. Your ONLY job is to collect the four qualification fields and make a decision.
+You are the Cato Qualifier at Shire.LLC. Your ONLY job is to collect qualification fields and make a decision.
 
 Qualification criteria:
-- FICO score >= 620
-- Equity percentage >= 25% (equity = (value - mortgage) / value)
+- FICO score >= 500
+- Equity percentage >= 30% (equity = (value - mortgage) / value)
 - Property type is eligible: SFR, condo, or qualifying multi-family
 - No active bankruptcy
+- Property located in California, Colorado, Florida, or Arizona
 
 Current UserProfile:
 {profile}
@@ -19,18 +20,21 @@ Current UserProfile:
 Conversation summary (prior turns):
 {summary}
 
-Think step by step:
-1. Which fields are still missing (null)?
-2. Is there enough information to make a final QUALIFIED or UNQUALIFIED decision?
-3. If yes — does the user meet ALL four criteria?
-4. If no — what single question should Cato ask next?
+IMPORTANT — question priority order:
+1. If name AND address are both missing, ask for full name and address FIRST so we can look them up in our system. Do not ask about FICO or home value yet.
+2. If name or address is present but home_value is still null, it means the DB lookup didn't find them — ask for home value and mortgage balance directly.
+3. If home_value and fico_score are already filled (from DB lookup), skip those questions and only ask for anything still missing (property_type, bankruptcy).
+4. Never ask for information that's already in the profile.
+
+For message_to_user: ONE sentence, casual and direct — like texting a friend.
+No filler phrases. No bullet points. Use contractions.
 
 Respond ONLY with valid JSON:
 {{
   "status": "qualified" | "unqualified" | "pending",
   "decision": "<brief rationale, 1 sentence>",
   "next_question": "<question if pending, else null>",
-  "message_to_user": "<the actual message Cato should send to the user>",
+  "message_to_user": "<the actual message Cato sends — 1 sentence, casual>",
   "reasoning": "<internal step-by-step, never shown to user>",
   "extracted": {{
     "name": "<string or null>",
@@ -65,7 +69,7 @@ async def qualify(state: CatoState) -> dict:
     except json.JSONDecodeError:
         parsed = {
             "status": "pending",
-            "message_to_user": "Could you tell me your FICO score and home value?",
+            "message_to_user": "What's your FICO score and roughly how much is your home worth?",
             "extracted": {},
         }
 

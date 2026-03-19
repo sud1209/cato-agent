@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cato — Home Equity Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      color: #1a1a2e;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    header .logo {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    header .subtitle {
+      font-size: 0.8rem;
+      opacity: 0.6;
+    }
+
+    header .session-badge {
+      margin-left: auto;
+      font-size: 0.72rem;
+      background: rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 4px 12px;
+      opacity: 0.7;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .bubble-wrap {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .bubble-wrap.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .avatar.cato { background: #1a1a2e; color: #fff; }
+    .avatar.user { background: #4f86f7; color: #fff; }
+
+    .bubble {
+      max-width: min(520px, 75vw);
+      padding: 10px 15px;
+      border-radius: 18px;
+      font-size: 0.92rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .bubble.cato {
+      background: #fff;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .bubble.user {
+      background: #4f86f7;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .bubble.streaming::after {
+      content: "▋";
+      animation: blink 0.8s step-end infinite;
+      margin-left: 2px;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    #composer {
+      background: #fff;
+      border-top: 1px solid #e0e0e0;
+      padding: 12px 16px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    #input {
+      flex: 1;
+      border: 1.5px solid #d0d0d8;
+      border-radius: 22px;
+      padding: 10px 16px;
+      font-size: 0.92rem;
+      resize: none;
+      outline: none;
+      max-height: 120px;
+      line-height: 1.4;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    #input:focus { border-color: #4f86f7; }
+
+    #send-btn {
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 42px;
+      height: 42px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    #send-btn:hover { background: #2d2d4e; }
+    #send-btn:active { transform: scale(0.93); }
+    #send-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+
+    .typing-indicator span {
+      width: 7px; height: 7px;
+      background: #aaa;
+      border-radius: 50%;
+      animation: bounce 1s infinite;
+    }
+
+    .typing-indicator span:nth-child(2) { animation-delay: 0.15s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes bounce {
+      0%,60%,100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Cato</div>
+    <div class="subtitle">Home Equity Intelligence Agent</div>
+  </div>
+  <div class="session-badge" id="session-label"></div>
+</header>
+
+<div id="messages"></div>
+
+<div id="composer">
+  <textarea id="input" rows="1" placeholder="Ask Cato about home equity…"></textarea>
+  <button id="send-btn" title="Send">&#9658;</button>
+</div>
+
+<script>
+  const sessionId = "demo-" + Math.random().toString(36).slice(2, 9);
+  document.getElementById("session-label").textContent = "session: " + sessionId;
+
+  const messagesEl = document.getElementById("messages");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send-btn");
+
+  function appendBubble(role, text = "") {
+    const wrap = document.createElement("div");
+    wrap.className = "bubble-wrap " + role;
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar " + role;
+    avatar.textContent = role === "cato" ? "C" : "U";
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble " + role;
+    bubble.textContent = text;
+
+    wrap.appendChild(avatar);
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return bubble;
+  }
+
+  function appendTyping() {
+    const wrap = document.createElement("div");
+    wrap.className = "bubble-wrap cato";
+    wrap.id = "typing-wrap";
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar cato";
+    avatar.textContent = "C";
+
+    const indicator = document.createElement("div");
+    indicator.className = "bubble cato typing-indicator";
+    indicator.innerHTML = "<span></span><span></span><span></span>";
+
+    wrap.appendChild(avatar);
+    wrap.appendChild(indicator);
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  async function send() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    inputEl.value = "";
+    inputEl.style.height = "auto";
+    sendBtn.disabled = true;
+
+    appendBubble("user", text);
+
+    const typingWrap = appendTyping();
+
+    let catoBubble = null;
+
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      });
+
+      typingWrap.remove();
+      catoBubble = appendBubble("cato", "");
+      catoBubble.classList.add("streaming");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") break;
+          catoBubble.textContent += data;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      }
+    } catch (err) {
+      typingWrap?.remove();
+      if (!catoBubble) catoBubble = appendBubble("cato", "");
+      catoBubble.textContent = "⚠ Error: " + err.message;
+    } finally {
+      catoBubble?.classList.remove("streaming");
+      sendBtn.disabled = false;
+      inputEl.focus();
+    }
+  }
+
+  sendBtn.addEventListener("click", send);
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = inputEl.scrollHeight + "px";
+  });
+
+  // Welcome message
+  appendBubble("cato", "Hey, I'm Cato from Shire.LLC — I can help you figure out if a home equity investment makes sense for you, answer any questions, and get you set up with an advisor if you want. What's on your mind?");
+</script>
+</body>
+</html>

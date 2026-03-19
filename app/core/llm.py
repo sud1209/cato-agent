@@ -15,10 +15,7 @@ def _get_callbacks() -> list:
 
 
 async def chat_completion(messages: list[dict], **kwargs: Any) -> str:
-    """
-    Async LiteLLM chat completion.
-    Returns the assistant message content string.
-    """
+    """Async LiteLLM chat completion using the main model."""
     response = await litellm.acompletion(
         model=settings.llm.model,
         messages=messages,
@@ -29,12 +26,21 @@ async def chat_completion(messages: list[dict], **kwargs: Any) -> str:
     return response.choices[0].message.content
 
 
+async def chat_completion_fast(messages: list[dict], **kwargs: Any) -> str:
+    """Async LiteLLM chat completion using the fast/cheap model (gpt-4o-mini)."""
+    response = await litellm.acompletion(
+        model=settings.llm.fast_model,
+        messages=messages,
+        temperature=kwargs.get("temperature", settings.llm.temperature),
+        callbacks=_get_callbacks(),
+        **{k: v for k, v in kwargs.items() if k != "temperature"},
+    )
+    return response.choices[0].message.content
+
+
 async def chat_completion_json(messages: list[dict], **kwargs: Any) -> str:
-    """
-    Same as chat_completion but requests JSON output (response_format).
-    Used by classifier and qualifier nodes.
-    """
-    return await chat_completion(
+    """JSON-mode completion using the fast model (classifier, qualifier)."""
+    return await chat_completion_fast(
         messages,
         response_format={"type": "json_object"},
         **kwargs,

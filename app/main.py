@@ -1,8 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()  # picks up OPENAI_API_KEY from .env
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
@@ -17,6 +20,14 @@ from app.rag.retriever import HybridRetriever
 from app.rag.indexer import index_documents
 
 app = FastAPI(title="Cato Agent API")
+
+_static = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=_static), name="static")
+
+
+@app.get("/")
+async def index():
+    return FileResponse(_static / "index.html")
 
 
 class ChatRequest(BaseModel):

@@ -8,6 +8,7 @@ import os
 @dataclass
 class LLMConfig:
     model: str
+    fast_model: str
     temperature: float
     streaming: bool
 
@@ -22,6 +23,7 @@ class RAGConfig:
     retrieval_k: int
     rerank_top_k: int
     reranker: str  # "cohere" | "local"
+    bm25_only: bool = False
 
 
 @dataclass

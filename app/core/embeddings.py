@@ -1,9 +1,17 @@
 from __future__ import annotations
 from typing import Sequence
-import asyncio
 import litellm
 from app.core.config import settings
 from langchain_core.embeddings import Embeddings as LCEmbeddings
+
+
+def _embed_texts_sync(texts: Sequence[str]) -> list[list[float]]:
+    """Synchronous embedding via LiteLLM (safe inside a running event loop)."""
+    response = litellm.embedding(
+        model=settings.embeddings.model,
+        input=list(texts),
+    )
+    return [item["embedding"] for item in response.data]
 
 
 async def embed_texts(texts: Sequence[str]) -> list[list[float]]:
@@ -25,10 +33,10 @@ class CatoEmbeddings(LCEmbeddings):
     """LangChain-compatible Embeddings adapter backed by LiteLLM."""
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return asyncio.get_event_loop().run_until_complete(embed_texts(texts))
+        return _embed_texts_sync(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        return asyncio.get_event_loop().run_until_complete(embed_query(text))
+        return _embed_texts_sync([text])[0]
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         return await embed_texts(texts)
