@@ -1,0 +1,27 @@
+llm:
+  model: "openai/gpt-4o"
+  fast_model: "openai/gpt-4o-mini"
+  temperature: 0.7
+  streaming: true
+
+embeddings:
+  model: "openai/text-embedding-3-large"
+
+rag:
+  retrieval_k: 10
+  rerank_top_k: 3
+  reranker: "local"
+  bm25_only: true
+
+memory:
+  working_window: 20
+  summary_threshold: 16
+  profile_ttl_days: 30
+
+redis:
+  url: "redis://localhost:6379"
+
+langfuse:
+  enabled: false
+  public_key: ""
+  secret_key: ""

@@ -1,32 +1,93 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from pathlib import Path
+import yaml
 import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
 
-class Settings(BaseSettings):
-    # Options: "openai", "anthropic", "ollama"
-    MODEL_PROVIDER: str = "openai"
-    
-    OPENAI_MODEL: str = "gpt-5-nano"
-    ANTHROPIC_MODEL: str = "claude-3-haiku-20240307"
-    OLLAMA_MODEL: str = "llama3.2"
 
-    OPENAI_API_KEY: Optional[str] = None
-    ANTHROPIC_API_KEY: Optional[str] = None
-    
-    REDIS_URL: str = "redis://localhost:6379"
-    REDIS_VECTOR_INDEX: str = "cato_hei_index"
-    PROPERTIES_DB_NAME: str = "properties.db"
-    
-    APP_NAME: str = "Cato Agentic AI"
-    DEBUG: bool = False
-    DEFAULT_SESSION_TTL: int = 3600  # 1 hour
+@dataclass
+class LLMConfig:
+    model: str
+    fast_model: str
+    temperature: float
+    streaming: bool
 
-    # Configuration for .env loading
-    model_config = SettingsConfigDict(
-        env_file=".env", 
-        env_file_encoding="utf-8",
-        extra="ignore"
+
+@dataclass
+class EmbeddingsConfig:
+    model: str
+
+
+@dataclass
+class RAGConfig:
+    retrieval_k: int
+    rerank_top_k: int
+    reranker: str  # "cohere" | "local"
+    bm25_only: bool = False
+
+
+@dataclass
+class MemoryConfig:
+    working_window: int
+    summary_threshold: int
+    profile_ttl_days: int
+
+
+@dataclass
+class RedisConfig:
+    url: str
+
+
+@dataclass
+class LangfuseConfig:
+    enabled: bool
+    public_key: str
+    secret_key: str
+
+
+@dataclass
+class Settings:
+    llm: LLMConfig
+    embeddings: EmbeddingsConfig
+    rag: RAGConfig
+    memory: MemoryConfig
+    redis: RedisConfig
+    langfuse: LangfuseConfig
+
+
+def _load_settings() -> Settings:
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    if not config_path.exists():
+        config_path = Path.cwd() / "config.yaml"
+    if not config_path.exists():
+        primary = Path(__file__).parent.parent.parent / "config.yaml"
+        raise FileNotFoundError(
+            f"config.yaml not found. Searched:\n"
+            f"  1. {primary}\n"
+            f"  2. {Path.cwd() / 'config.yaml'}\n"
+            f"Create config.yaml at the cato-agent project root."
+        )
+    with open(config_path) as f:
+        raw = yaml.safe_load(f)
+
+    def _env(val: str) -> str:
+        if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+            return os.environ.get(val[2:-1], "")
+        return val
+
+    lf = raw.get("langfuse", {})
+    return Settings(
+        llm=LLMConfig(**raw["llm"]),
+        embeddings=EmbeddingsConfig(**raw["embeddings"]),
+        rag=RAGConfig(**raw["rag"]),
+        memory=MemoryConfig(**raw["memory"]),
+        redis=RedisConfig(**raw["redis"]),
+        langfuse=LangfuseConfig(
+            enabled=lf.get("enabled", False),
+            public_key=_env(lf.get("public_key", "")),
+            secret_key=_env(lf.get("secret_key", "")),
+        ),
     )
 
-settings = Settings()
-os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
+
+settings = _load_settings()

@@ -14,10 +14,11 @@ build/
 # uv (lockfile is committed; venv is not)
 # uv.lock is intentionally NOT ignored
 
-# Data & local files
+# Data — exclude generated/binary, keep source files
 data/*.db
-data/*.csv
-data/*.json
+
+# Internal planning docs
+docs/superpowers/
 
 # IDE
 .vscode/

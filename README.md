@@ -1,465 +1,361 @@
-# Cato Agent - Home Equity AI Assistant
+# Cato — Home Equity Agent
 
-A multiagent AI system designed to help homeowners explore home equity investment (HEI) opportunities. Cato is a conversational AI that qualifies users, addresses concerns, and facilitates bookings for home equity consultations.
+Cato is a domain-specialized conversational AI agent for home equity investment qualification. It serves as a reference implementation of current agentic AI architecture, and is a ground-up modernization of a prior LangChain-based prototype.
 
-## Overview
+The agent qualifies homeowners for a Home Equity Investment (HEI) product offered by Shire.LLC, handles objections, answers product questions, and books advisor calls — all through a natural, single-sentence conversational style designed to feel like texting a knowledgeable friend.
 
-Cato is a prototype agentic AI system built with **LangChain**, **LLMs** (OpenAI/Anthropic/Ollama), and **Redis** for stateful conversations. The system uses an intelligent routing layer that directs user conversations to specialized agents based on intent analysis.
+---
 
-### Key Features
+## Architecture
 
-- **Multi-agent Architecture**: Specialized agents handle different aspects of the conversation
-- **Intent Classification**: Automatically routes conversations to the appropriate agent
-- **State Management**: Persistent session state stored in Redis
-- **RAG Integration**: Knowledge base for product information and qualification rules
-- **Flexible LLM Support**: Works with OpenAI, Anthropic, or Ollama models
-- **Async-First Design**: Built for high-concurrency operations
+### Stateful Graph Routing (LangGraph)
+
+Every conversation turn flows through a compiled `StateGraph`. A classifier node determines intent, and conditional edges route to the appropriate handler — no hardcoded if/else chains.
+
+```mermaid
+flowchart TD
+    A([User Message]) --> B[classify_intent]
+    B --> C{intent}
+    C -->|objection| D[handle_objection]
+    C -->|qualify| E[qualify]
+    C -->|info| F[handle_info]
+    C -->|book| G[book_appointment]
+    C -->|general| H[handle_general]
+    E --> I{result}
+    I -->|qualified| G
+    I -->|pending / unqualified| Z([END])
+    D --> Z
+    F --> Z
+    G --> Z
+    H --> Z
+```
+
+Each node receives and returns a typed `CatoState` (TypedDict with `Annotated` reducers), making state transitions explicit and testable.
+
+### Provider-Agnostic LLM (LiteLLM)
+
+All LLM calls go through LiteLLM, which abstracts the provider behind a unified API. Switching from OpenAI to Anthropic, Gemini, or a local model is a one-line config change in `config.yaml`.
+
+Two model tiers reduce cost and latency:
+- **`gpt-4o`** — qualifier, info, objection nodes where reasoning quality matters
+- **`gpt-4o-mini`** — classifier, general, booking nodes where speed matters
+
+### Hybrid RAG
+
+Product knowledge retrieval uses a two-stage pipeline:
+
+```mermaid
+flowchart LR
+    Q([Query]) --> B[BM25 keyword search]
+    Q --> V[Vector similarity search]
+    B --> R[Reciprocal Rank Fusion]
+    V --> R
+    R --> X[Cross-encoder reranking]
+    X --> CTX([Context injected into prompt])
+```
+
+BM25-only mode (`bm25_only: true` in config) skips the embedding API call for lower latency on small knowledge bases. The cross-encoder runs in a thread pool to avoid blocking the async event loop.
+
+### 3-Tier Memory (Redis)
+
+| Tier | Key pattern | Purpose |
+|---|---|---|
+| Working | `cato:working:{session_id}` | Sliding window of recent messages |
+| Episodic | `cato:summary:{session_id}` | LLM-compressed rolling summary of older turns |
+| Semantic | `cato:profile:{session_id}` | Persistent `UserProfile` (FICO, home value, equity, etc.) |
+
+### Property Lookup
+
+When a user provides their name or address, the classifier immediately queries a local SQLite database and pre-fills the `UserProfile` with home value, mortgage balance, equity percentage, and FICO score — before routing to any node, eliminating redundant qualification questions.
+
+The DB lookup runs concurrently with the LLM classification call via `asyncio.gather`.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Agent framework | [LangGraph](https://github.com/langchain-ai/langgraph) 0.2+ |
+| LLM abstraction | [LiteLLM](https://github.com/BerriAI/litellm) 1.0+ |
+| Embeddings | OpenAI `text-embedding-3-large` via LiteLLM |
+| Vector store | Redis + `langchain-redis` |
+| BM25 | `rank-bm25` |
+| Reranker | `sentence-transformers` CrossEncoder / Cohere |
+| Memory & cache | Redis (async via `redis.asyncio`) |
+| Property DB | SQLite |
+| API server | FastAPI + SSE streaming |
+| Config | `config.yaml` + Python dataclasses |
+| Observability | Langfuse (optional, toggle in config) |
+| Python | 3.12+ |
+
+---
 
 ## Project Structure
 
 ```
 cato-agent/
-├── app/                          # Main application code
+├── app/
 │   ├── core/
-│   │   ├── agent/               # AI agents
-│   │   │   ├── master.py         # Master router agent (intent classification)
-│   │   │   ├── qualifier.py      # Qualification assessment agent
-│   │   │   ├── objection_handler.py  # Handles user concerns/objections
-│   │   │   ├── booking_agent.py  # Handles booking requests
-│   │   │   ├── unqualified_agent.py  # Handles users who don't qualify
-│   │   │   ├── model_factory.py  # LLM provider factory
-│   │   │   └── embeddings_factory.py  # Embedding model factory
-│   │   ├── tools/               # Agent tools
-│   │   │   ├── property_tool.py  # Property/user profile lookup
-│   │   │   └── rag_tool.py       # RAG engine for knowledge base
-│   │   └── config.py            # Configuration settings
+│   │   ├── config.py           # YAML-based typed config (dataclasses)
+│   │   ├── llm.py              # LiteLLM wrappers — main + fast model tiers
+│   │   └── embeddings.py       # LangChain-compatible async embeddings adapter
+│   ├── graph/
+│   │   ├── graph.py            # LangGraph StateGraph definition
+│   │   ├── state.py            # CatoState TypedDict
+│   │   └── nodes/
+│   │       ├── classifier.py   # Intent classification + entity extraction + DB lookup
+│   │       ├── qualifier.py    # HEI eligibility assessment
+│   │       ├── objection.py    # Objection handling with RAG context
+│   │       ├── info.py         # Product Q&A with RAG context + profile awareness
+│   │       ├── booking.py      # Advisor call scheduling
+│   │       └── general.py      # Greeting / pivot to funnel
+│   ├── memory/
+│   │   ├── working.py          # Sliding window message history
+│   │   ├── episodic.py         # Rolling LLM-generated summary
+│   │   └── profile.py          # UserProfile Pydantic model with computed equity
+│   ├── rag/
+│   │   ├── indexer.py          # Document chunking + Redis vector indexing
+│   │   ├── retriever.py        # Hybrid BM25 + vector retrieval + RRF
+│   │   └── reranker.py         # Cross-encoder / Cohere reranking (thread pool)
 │   ├── db/
-│   │   └── redis_client.py      # Redis state management
-│   └── schemas/
-│       ├── agent_responses.py   # Pydantic models for agent outputs
-│       └── state.py             # CatoState schema
-├── data/                         # Test data and knowledge base
-│   ├── objection_examples.json  # Example user objections
-│   └── cato_john_inputs.txt   # Sample conversation data
-├── scripts/                      # Utility scripts
-│   ├── cato_demo.py           # Interactive demo
-│   ├── test_suite.py            # Test scenarios
-│   ├── seed_objections.py       # Load objections into knowledge base
-│   ├── seed_mock_db.py          # Initialize mock data
-│   └── extract_objections.py    # Extract objections from data
-├── docker-compose.yml           # Docker services (app + Redis)
-├── .env                         # Environment configuration
-└── README.md                    # This file
+│   │   └── property_lookup.py  # Async SQLite property + user lookup
+│   ├── static/
+│   │   └── index.html          # Browser chat UI (streaming SSE)
+│   └── main.py                 # FastAPI app — startup, /chat endpoint, SSE streaming
+├── data/
+│   ├── hei_knowledge.json      # RAG knowledge base (auto-indexed on startup)
+│   ├── objection_examples.json # Objection Q&A pairs
+│   ├── properties.csv          # Mock property data
+│   └── users.csv               # Mock user data
+├── scripts/
+│   ├── chat.py                 # Terminal REPL chat client
+│   ├── seed_mock_db.py         # Seed properties.db from CSV files
+│   ├── seed_objections.py      # Index objection examples into Redis
+│   └── extract_objections.py   # Extract Q&A pairs from raw transcripts
+├── tests/                      # pytest suite (fakeredis — no live deps required)
+├── config.yaml                 # Single source of truth for all settings
+├── .env.example                # Environment variable template
+└── pyproject.toml
 ```
-
-## Architecture
-
-### Agent Flow
-
-```
-User Input
-    ↓
-[Master Agent] - Intent Classification
-    ↓
-    ├─→ OBJECTION → [Objection Handler] → Response
-    ├─→ QUALIFICATION → [Qualifier Agent] → Check FICO/Equity/Liens
-    │                      ├─→ Qualified → Continue
-    │                      └─→ Unqualified → [Unqualified Agent]
-    ├─→ BOOKING → [Booking Agent] → Schedule/Confirm
-    ├─→ INFO/GENERAL → [Info Provider] (via Objection Handler)
-    └─→ Default → Fallback Greeting
-    ↓
-[Redis] - Store session state & chat history
-```
-
-### Key Agents
-
-| Agent | Purpose | Input | Output |
-|-------|---------|-------|--------|
-| **Master** | Route to appropriate agent | User message | Intent + routed response |
-| **Qualifier** | Check HEI eligibility | User financial data | Qualification status |
-| **Objection Handler** | Address concerns | User concern message | Empathetic response |
-| **Booking Agent** | Schedule consultations | User booking intent | Confirmation details |
-| **Unqualified Agent** | Handle rejections | Disqualification reason | Polite decline message |
-
-### Intent Types
-
-- **GENERAL**: Greetings, social pleasantries, introductions
-- **OBJECTION**: Skepticism, scam concerns, trust issues
-- **QUALIFICATION**: Financial data (FICO score, equity, debt)
-- **BOOKING**: Requests to talk to a person or schedule
-- **INFO**: Questions about product, fees, how HEI works
-
-## Setup & Installation
-
-### Prerequisites
-
-- Python 3.9+
-- Docker & Docker Compose (for Redis)
-- LLM API Key (OpenAI, Anthropic, or local Ollama)
-
-### Quick Start
-
-1. **Clone the repository**
-   ```bash
-   cd cato-agent
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   # Or if using uv
-   uv sync
-   ```
-
-3. **Configure environment variables**
-   ```bash
-   # Edit .env with your API keys
-   cp .env.example .env
-   ```
-
-   ```env
-   # .env
-   MODEL_PROVIDER=openai              # Options: openai, anthropic, ollama
-   OPENAI_API_KEY=your_key_here
-   REDIS_URL=redis://localhost:6379
-   ```
-
-4. **Start Redis services**
-   ```bash
-   docker-compose up -d
-   ```
-   This starts:
-   - `cato_app`: FastAPI application (port 8000)
-   - `cato_redis`: Redis Stack (port 6379)
-   - `cato_viz`: RedisInsight UI (port 5540)
-
-5. **Run the demo**
-   ```bash
-   python scripts/cato_demo.py
-   ```
-
-   This opens an interactive chat with Cato:
-   ```
-   --- Cato Vibe Check (Session: vibe-check-abc123) ---
-   Type 'exit' to quit.
-
-   You: Hi, I'm interested in learning about home equity
-   Cato: Great! I'm Cato from Home.LLC. Let me see if you might be a good fit...
-   ```
-
-## Configuration
-
-### Environment Variables (`.env`)
-
-```env
-# LLM Provider
-MODEL_PROVIDER=openai               # openai | anthropic | ollama
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_API_KEY=sk-...
-
-ANTHROPIC_MODEL=claude-3-haiku-20240307
-ANTHROPIC_API_KEY=sk-ant-...
-
-OLLAMA_MODEL=llama3.2
-
-# Redis Configuration
-REDIS_URL=redis://localhost:6379/0
-REDIS_VECTOR_INDEX=cato_hei_index
-PROPERTIES_DB_NAME=properties.db
-
-# Application
-DEBUG=False
-DEFAULT_SESSION_TTL=3600            # Session timeout in seconds
-APP_NAME=Cato Agentic AI
-```
-
-### Model Selection
-
-Cato supports multiple LLM providers. Switch providers by changing `MODEL_PROVIDER`:
-
-```python
-# config.py handles automatic selection
-llm = get_model(temperature=0)  # Uses provider from .env
-```
-
-## Usage Examples
-
-### Interactive Demo
-
-```bash
-python scripts/cato_demo.py
-```
-
-### Test Suite
-
-Run predefined test scenarios:
-
-```bash
-python scripts/test_suite.py
-```
-
-### Data Preparation
-
-Seed the knowledge base with objection examples:
-
-```bash
-python scripts/seed_objections.py      # Load objections into RAG
-python scripts/seed_mock_db.py         # Initialize mock properties
-python scripts/extract_objections.py   # Extract objections from data files
-```
-
-### Programmatic Usage
-
-```python
-import asyncio
-from app.core.agent.master import run_master_agent
-
-async def chat_with_cato():
-    session_id = "user-123"
-    user_input = "I have $200k in equity and a 750 FICO score"
-
-    response = await run_master_agent(session_id, user_input)
-    print(response)
-
-asyncio.run(chat_with_cato())
-```
-
-## API & Integration
-
-### FastAPI Endpoints
-
-When running via Docker:
-
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Chat endpoint
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d {
-    "session_id": "user-123",
-    "message": "Hi Cato!"
-  }
-```
-
-### Redis State Management
-
-Session state is stored in Redis:
-
-```python
-from app.db.redis_client import redis_manager
-
-# Get session state
-state = await redis_manager.get_cato_state(session_id)
-
-# Update session state
-await redis_manager.update_cato_state(session_id, {
-    "user_name": "John",
-    "qual_status": "PENDING"
-})
-```
-
-### Chat History
-
-Conversations are persisted using Redis:
-
-```python
-from langchain_community.chat_message_histories import RedisChatMessageHistory
-
-history = RedisChatMessageHistory(
-    session_id=f"chat_{session_id}",
-    url=settings.REDIS_URL
-)
-
-# History is automatically maintained
-history.add_user_message("Hello")
-history.add_ai_message("Hi there!")
-```
-
-## Qualification Flow
-
-Cato uses a qualification process to determine HEI eligibility:
-
-### Qualification Criteria
-
-| Criterion | Requirement | Status |
-|-----------|-------------|--------|
-| **FICO Score** | ≥ 620 | Required |
-| **Home Equity** | Sufficient value | Required |
-| **Liens** | Acceptable number | Checked |
-
-### Qualification Statuses
-
-- **QUALIFIED**: Meets all criteria → proceed to booking
-- **UNQUALIFIED**: Hard fails (FICO < 620) → polite decline
-- **PENDING**: Missing data → request more info
-
-### Disqualification Logic
-
-Hard fails trigger immediate disqualification:
-
-```python
-# Hard fail: FICO < 620
-if fico_score < 620:
-    qual_status = "UNQUALIFIED"
-    reason = f"FICO score of {fico_score} is below the 620 minimum"
-    # Exit immediately without collecting more data
-```
-
-## Data Files
-
-### `data/objection_examples.json`
-
-Sample user objections and concerns:
-
-```json
-[
-  {
-    "objection": "Isn't this a scam?",
-    "category": "trust",
-    "response": "..."
-  },
-  ...
-]
-```
-
-### `data/cato_john_inputs.txt`
-
-Sample conversation for testing and development.
-
-## Testing
-
-### Run Test Suite
-
-```bash
-python scripts/test_suite.py
-```
-
-The test suite validates:
-- Intent classification accuracy
-- Agent routing logic
-- Qualification rules
-- Objection handling
-- Booking flow
-
-### Debug Mode
-
-Enable debug logging:
-
-```env
-DEBUG=True
-```
-
-## Troubleshooting
-
-### Redis Connection Failed
-
-```
-Error: Cannot connect to redis://localhost:6379
-```
-
-**Solution**: Ensure Redis is running:
-```bash
-docker-compose up -d redis
-docker ps  # Verify containers
-```
-
-### LLM API Key Invalid
-
-```
-Error: Invalid API key for OpenAI
-```
-
-**Solution**: Check your `.env` file:
-```bash
-echo $OPENAI_API_KEY  # Verify key is set
-# Regenerate key from provider dashboard
-```
-
-### Session Not Persisting
-
-**Solution**: Verify Redis persistence is enabled and volume is mounted:
-```bash
-docker-compose logs redis  # Check Redis logs
-docker-compose down -v    # Clean volumes if needed
-```
-
-## Performance & Scaling
-
-### Current Architecture
-
-- **Concurrency**: Async-first design supports multiple concurrent sessions
-- **State Storage**: Redis provides sub-millisecond latency for state lookups
-- **Vector Search**: Redis Stack supports semantic search via embeddings
-- **Chat History**: Stored in Redis with configurable TTL (default: 1 hour)
-
-### Optimization Tips
-
-1. **Increase Redis memory**:
-   ```yaml
-   # docker-compose.yml
-   environment:
-     - REDIS_ARGS=--maxmemory 2gb --maxmemory-policy allkeys-lru
-   ```
-
-2. **Batch processing**: Use async agents for parallel tasks
-
-3. **Model selection**: Use faster models (gpt-4o-mini) for qualification, more capable models for objections
-
-## Development
-
-### Project Structure
-
-- **Agents**: Pure LLM logic with structured outputs (Pydantic models)
-- **Tools**: Deterministic lookups (properties, rules, knowledge base)
-- **Schemas**: Type-safe request/response contracts
-- **DB**: Redis abstraction for state and history
-
-### Adding a New Agent
-
-1. Create `app/core/agent/my_agent.py`:
-   ```python
-   from langchain.agents import create_agent
-   from app.core.agent.model_factory import get_model
-
-   llm = get_model(temperature=0)
-
-   MY_PROMPT = "You are..."
-
-   my_agent = create_agent(
-       model=llm,
-       tools=[...],
-       system_prompt=MY_PROMPT
-   )
-   ```
-
-2. Update master agent routing:
-   ```python
-   # app/core/agent/master.py
-   if "MY_INTENT" in intent:
-       result = await my_agent.ainvoke({...})
-   ```
-
-### Testing Locally
-
-```bash
-# Run demo with your agent
-python scripts/cato_demo.py
-
-# Run tests
-python scripts/test_suite.py
-```
-
-## License
-
-[Add appropriate license information]
-
-## Support & Contact
-
-For questions or issues, refer to the `data/` directory for example inputs or check the test suite in `scripts/test_suite.py`.
 
 ---
 
-**Last Updated**: 2026-03-17
+## Modernization vs. Prior System
+
+The original prototype (archived in `cato-legacy/`) used LangChain agents with hardcoded routing, a single Redis vector store, and `pydantic-settings` for config. This implementation replaces that architecture throughout:
+
+| | Legacy (`cato-legacy/`) | This implementation |
+|---|---|---|
+| Routing | If/else in `master.py` | LangGraph `StateGraph` with typed conditional edges |
+| LLM calls | LangChain `init_chat_model` | LiteLLM — swap providers via config |
+| Retrieval | Single vector similarity search | BM25 + vector + RRF + reranking |
+| Memory | Redis chat history only | 3-tier: working / episodic / semantic |
+| Config | `pydantic-settings` + `.env` | `config.yaml` + dataclasses |
+| State | Loosely typed dict | `TypedDict` with `Annotated` reducers |
+| Property lookup | LangChain tool (sync) | Async SQLite, concurrent with classification |
+| Observability | None | Langfuse (optional) |
+| Streaming | None | SSE via `StreamingResponse` |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.12+
+- Redis Stack (for vector search support)
+- OpenAI API key
+
+### Redis Setup
+
+The easiest path is Docker:
+
+```bash
+# Redis only
+docker run -d -p 6379:6379 redis/redis-stack-server:latest
+
+# Or use the included compose file (Redis + RedisInsight UI on :5540)
+docker-compose up -d redis redis-insight
+```
+
+### Installation
+
+```bash
+# Install dependencies (uv recommended)
+uv sync
+
+# Copy environment template and add your key
+cp .env.example .env
+# Edit .env: OPENAI_API_KEY=sk-...
+
+# Seed the property database
+python scripts/seed_mock_db.py
+
+# Start the server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+On first startup the server indexes `data/hei_knowledge.json` into Redis automatically. Subsequent restarts reuse the existing index.
+
+### Demo
+
+**Browser** — open [http://localhost:8000](http://localhost:8000) for the streaming chat UI.
+
+**Terminal:**
+```bash
+python scripts/chat.py
+```
+
+### Tests
+
+```bash
+pytest
+```
+
+Uses `fakeredis` — no live Redis or API keys required.
+
+---
+
+## Example Conversation
+
+```
+Cato: Hey, I'm Cato from Shire.LLC — do you own your home and have you
+      thought about pulling some cash out of your equity?
+
+You:  Yeah I own a place, but I'm not sure what home equity even is
+
+Cato: It's the difference between what your home's worth and what you
+      still owe — what would you want the cash for if you had access to it?
+
+You:  Maybe pay off some credit card debt. But this sounds too good to be true
+
+Cato: I get it — unlike a loan, there's no monthly payment or interest,
+      you just share a slice of future appreciation when you sell.
+      What specifically feels off about it?
+
+You:  How do I know it's legit? My name is Sarah Jenkins, 1292 Oak St Phoenix
+
+Cato: Sarah, you're at $520K with 22% equity — to qualify we'd need you
+      above 30%, but want me to walk through what could get you there?
+```
+
+The agent looked up Sarah's address in the property DB, pulled her home value and equity, and moved straight to a personalized response — no redundant questions.
+
+---
+
+## Configuration
+
+All settings live in `config.yaml`:
+
+```yaml
+llm:
+  model: "openai/gpt-4o"            # Main model (qualifier, info, objection)
+  fast_model: "openai/gpt-4o-mini"  # Fast model (classifier, general, booking)
+  temperature: 0.7
+  streaming: true
+
+rag:
+  retrieval_k: 10
+  rerank_top_k: 3
+  reranker: "local"    # "local" (CrossEncoder) or "cohere"
+  bm25_only: true      # Skip vector search — lower latency for small knowledge bases
+
+langfuse:
+  enabled: false       # Set true + add keys to enable LLM call tracing
+  public_key: ""
+  secret_key: ""
+```
+
+**Switching LLM provider** — change `model` to any [LiteLLM-supported](https://docs.litellm.ai/docs/providers) identifier:
+
+```yaml
+llm:
+  model: "anthropic/claude-opus-4-6"
+  fast_model: "anthropic/claude-haiku-4-5-20251001"
+```
+
+**Environment variables** (see `.env.example`):
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | Yes | LLM + embeddings calls |
+| `COHERE_API_KEY` | If `reranker: "cohere"` | Cohere reranking API |
+| `LANGFUSE_PUBLIC_KEY` | If `langfuse.enabled: true` | Observability |
+| `LANGFUSE_SECRET_KEY` | If `langfuse.enabled: true` | Observability |
+
+---
+
+## Extending the Graph
+
+### Adding a new intent + node
+
+1. **Create the node** in `app/graph/nodes/my_node.py`:
+
+```python
+from app.core.llm import chat_completion
+from app.graph.state import CatoState
+
+async def handle_my_intent(state: CatoState) -> dict:
+    messages_payload = [
+        {"role": "system", "content": "You are Cato ..."},
+        *[{"role": "user" if m.type == "human" else "assistant",
+           "content": m.content} for m in state["messages"]],
+    ]
+    response = await chat_completion(messages_payload, temperature=0.4)
+    from langchain_core.messages import AIMessage
+    return {"messages": [AIMessage(content=response)]}
+```
+
+2. **Register it in `app/graph/graph.py`**:
+
+```python
+from app.graph.nodes.my_node import handle_my_intent
+
+# In build_graph():
+builder.add_node("handle_my_intent", handle_my_intent)
+builder.add_edge("handle_my_intent", END)
+```
+
+3. **Add the route** in `_route_after_classify`:
+
+```python
+if intent == "my_intent":
+    return "handle_my_intent"
+```
+
+4. **Update the classifier prompt** in `app/graph/nodes/classifier.py` to include the new intent label and examples.
+
+### Extending the knowledge base
+
+Add entries to `data/hei_knowledge.json` following the existing format:
+
+```json
+{
+  "content": "Your knowledge chunk here.",
+  "metadata": {"category": "your_category"}
+}
+```
+
+Restart the server — indexing runs on startup automatically.
+
+---
+
+## Limitations & Scope
+
+This is a functional proof of concept demonstrating agent architecture patterns. A few things to be aware of before treating it as production-ready:
+
+- **Mock data only** — `properties.db` is seeded from synthetic CSV data covering Phoenix, AZ. The property lookup will not find addresses outside this dataset.
+- **No API authentication** — the `/chat` endpoint is open. Session IDs are client-provided strings with no server-side validation.
+- **No rate limiting** — there is no throttling on LLM calls or the API.
+- **Fictional company** — Shire.LLC and its HEI product parameters are illustrative. The knowledge base is adapted from a template, not real product documentation.
+- **Placeholder booking** — the Calendly link in the booking node (`calendly.com/shirellc/advisor`) is a placeholder. There is no actual calendar integration.
+- **CrossEncoder cold start** — `BAAI/bge-reranker-base` (~270MB) downloads from HuggingFace on first run and caches locally. Subsequent starts use the cache.
+- **Single-process state** — the CrossEncoder is cached as a module-level singleton, which works for a single-process deployment but would need rethinking behind a multi-worker setup.
+- **No multi-tenancy** — the SQLite property DB is a single shared file with no per-tenant isolation.
+
+---
+
+## License
+
+MIT — do whatever you want with it. Attribution appreciated but not required.
