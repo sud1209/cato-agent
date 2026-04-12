@@ -17,7 +17,10 @@ build/
 # Data — exclude generated/binary, keep source files
 data/*.db
 
-# Internal planning docs
+# Internal planning docs (not user-facing)
+PLAN.md
+DESIGN.md
+INTERNALS.md
 docs/superpowers/
 
 # IDE
