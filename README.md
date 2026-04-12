@@ -2,6 +2,8 @@
 
 Cato is a domain-specialized conversational AI agent for home equity investment qualification. It serves as a reference implementation of current agentic AI architecture, and is a ground-up modernization of a prior LangChain-based prototype.
 
+A companion evaluation harness — [llm-eval-harness](https://github.com/sudarsh-lang/llm-eval-harness) — provides automated RAG quality metrics, LLM-as-judge scoring, and CI/CD integration for this agent.
+
 The agent qualifies homeowners for a Home Equity Investment (HEI) product offered by Shire.LLC, handles objections, answers product questions, and books advisor calls — all through a natural, single-sentence conversational style designed to feel like texting a knowledgeable friend.
 
 ---
@@ -353,6 +355,12 @@ This is a functional proof of concept demonstrating agent architecture patterns.
 - **CrossEncoder cold start** — `BAAI/bge-reranker-base` (~270MB) downloads from HuggingFace on first run and caches locally. Subsequent starts use the cache.
 - **Single-process state** — the CrossEncoder is cached as a module-level singleton, which works for a single-process deployment but would need rethinking behind a multi-worker setup.
 - **No multi-tenancy** — the SQLite property DB is a single shared file with no per-tenant isolation.
+
+---
+
+## Evaluation
+
+Automated quality measurement for this agent is handled by [llm-eval-harness](https://github.com/sudarsh-lang/llm-eval-harness) — a companion repo that runs RAGAS metrics (faithfulness, answer relevance, context recall, context precision), LLM-as-judge scoring, and drift detection against a suite of 40 domain-specific test cases. It integrates as a GitHub Actions CI gate that blocks PRs degrading response quality below configured thresholds.
 
 ---
 
