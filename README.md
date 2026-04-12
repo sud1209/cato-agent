@@ -2,7 +2,7 @@
 
 Cato is a domain-specialized conversational AI agent for home equity investment qualification. It serves as a reference implementation of current agentic AI architecture, and is a ground-up modernization of a prior LangChain-based prototype.
 
-A companion evaluation harness — [llm-eval-harness](https://github.com/sudarsh-lang/llm-eval-harness) — provides automated RAG quality metrics, LLM-as-judge scoring, and CI/CD integration for this agent.
+A companion evaluation harness — [llm-eval-harness](https://github.com/sud1209/llm-eval-harness) — provides automated RAG quality metrics, LLM-as-judge scoring, and CI/CD integration for this agent.
 
 The agent qualifies homeowners for a Home Equity Investment (HEI) product offered by Shire.LLC, handles objections, answers product questions, and books advisor calls — all through a natural, single-sentence conversational style designed to feel like texting a knowledgeable friend.
 
@@ -360,7 +360,7 @@ This is a functional proof of concept demonstrating agent architecture patterns.
 
 ## Evaluation
 
-Automated quality measurement for this agent is handled by [llm-eval-harness](https://github.com/sudarsh-lang/llm-eval-harness) — a companion repo that runs RAGAS metrics (faithfulness, answer relevance, context recall, context precision), LLM-as-judge scoring, and drift detection against a suite of 40 domain-specific test cases. It integrates as a GitHub Actions CI gate that blocks PRs degrading response quality below configured thresholds.
+Automated quality measurement for this agent is handled by [llm-eval-harness](https://github.com/sud1209/llm-eval-harness) — a companion repo that runs RAGAS metrics (faithfulness, answer relevance, context recall, context precision), LLM-as-judge scoring, and drift detection against a suite of 40 domain-specific test cases. It integrates as a GitHub Actions CI gate that blocks PRs degrading response quality below configured thresholds.
 
 ---
 
